@@ -1,0 +1,3 @@
+// Ensure correct import
+import supabase from '../lib/supabase';
+// ... rest of the file remains the same ...

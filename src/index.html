@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>3D Navigation</title>
+  <style>
+    body {
+      margin: 0;
+      overflow: hidden;
+      font-family: 'Arial', sans-serif;
+    }
+    #scene-container {
+      position: absolute;
+      width: 100%;
+      height: 100%;
+    }
+    #info-panel {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      padding: 10px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #00ff88;
+      border: 1px solid #00ff88;
+      border-radius: 5px;
+      max-width: 300px;
+    }
+    #controls {
+      position: absolute;
+      bottom: 10px;
+      left: 10px;
+      padding: 10px;
+      background: rgba(0, 0, 0, 0.7);
+      color: #00ff88;
+      border: 1px solid #00ff88;
+      border-radius: 5px;
+    }
+    kbd {
+      background: rgba(0, 255, 136, 0.2);
+      padding: 2px 5px;
+      border-radius: 3px;
+      border: 1px solid rgba(0, 255, 136, 0.4);
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+  <div id="scene-container"></div>
+  <div id="info-panel">
+    <h3>Position Info</h3>
+    <div id="position-info">X: 0, Y: 0, Z: 0</div>
+    <div id="quadrant-info"></div>
+  </div>
+  <div id="controls">
+    <h3>Controls</h3>
+    <div><kbd>WASD</kbd> - Move camera</div>
+    <div><kbd>↑↓</kbd> - Vertical movement</div>
+    <div><kbd>Q/E</kbd> - Rotate view</div>
+    <div><kbd>Mouse Wheel</kbd> - Zoom</div>
+    <div><kbd>Click</kbd> - Select position</div>
+  </div>
+
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.skypack.dev/three@0.160.0",
+        "three/addons/": "https://cdn.skypack.dev/three@0.160.0/examples/jsm/"
+      }
+    }
+  </script>
+  
+  <script type="module">
+    import * as THREE from 'three';
+    
+    // Set up scene
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0a0a);
+    
+    // Set up camera
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5000);
+    camera.position.set(200, 200, 200);
+    camera.lookAt(0, 0, 0);
+    
+    // Set up renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    document.getElementById('scene-container').appendChild(renderer.domElement);
+    
+    // Add lights
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+    scene.add(ambientLight);
+    
+    const directionalLight = new THREE.DirectionalLight(0x00ff88, 0.8);
+    directionalLight.position.set(100, 100, 100);
+    scene.add(directionalLight);
+    
+    // Create grid
+    const gridHelper = new THREE.GridHelper(1000, 20, 0x00ff88, 0x004422);
+    gridHelper.material.opacity = 0.3;
+    gridHelper.material.transparent = true;
+    scene.add(gridHelper);
+    
+    // Create star field
+    const starGeometry = new THREE.BufferGeometry();
+    const starMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.5 });
+    const starVertices = [];
+    
+    for (let i = 0; i < 1000; i++) {
+      const x = (Math.random() - 0.5) * 2000;
+      const y = (Math.random() - 0.5) * 2000;
+      const z = (Math.random() - 0.5) * 2000;
+      starVertices.push(x, y, z);
+    }
+    
+    starGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starVertices, 3));
+    const stars = new THREE.Points(starGeometry, starMaterial);
+    scene.add(stars);
+    
+    // Add some sample objects
+    const addSphere = (x, y, z, color, radius = 5) => {
+      const geometry = new THREE.SphereGeometry(radius, 8, 8);
+      const material = new THREE.MeshBasicMaterial({ 
+        color, 
+        transparent: true, 
+        opacity: 0.8 
+      });
+      
+      const sphere = new THREE.Mesh(geometry, material);
+      sphere.position.set(x, y, z);
+      scene.add(sphere);
+      
+      return sphere;
+    };
+    
+    // Add some example locations
+    addSphere(120, 50, -80, 0x00ff88);  // Green
+    addSphere(-150, 30, 200, 0x00aaff); // Blue
+    addSphere(80, 10, 150, 0xff0000);   // Red
+    addSphere(-90, 20, -40, 0x0088ff);  // Light blue
+    
+    // Highlight object for selection
+    let highlightMesh = null;
+    
+    // Camera controls
+    const keys = {};
+    let mousePos = { x: 0, y: 0 };
+    
+    window.addEventListener('keydown', (e) => {
+      keys[e.code] = true;
+    });
+    
+    window.addEventListener('keyup', (e) => {
+      keys[e.code] = false;
+    });
+    
+    window.addEventListener('mousemove', (e) => {
+      mousePos.x = (e.clientX / window.innerWidth) * 2 - 1;
+      mousePos.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    });
+    
+    window.addEventListener('wheel', (e) => {
+      const zoomSpeed = 0.1;
+      const direction = e.deltaY > 0 ? 1 : -1;
+      
+      // Zoom in/out
+      const newPosition = camera.position.clone();
+      newPosition.multiplyScalar(1 + direction * zoomSpeed);
+      camera.position.copy(newPosition);
+      
+      updatePositionInfo();
+    });
+    
+    window.addEventListener('click', (e) => {
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(mousePos, camera);
+      
+      const intersects = raycaster.intersectObjects(scene.children);
+      
+      if (intersects.length > 0) {
+        const point = intersects[0].point;
+        
+        // Remove previous highlight if exists
+        if (highlightMesh) scene.remove(highlightMesh);
+        
+        // Create a new highlight box
+        const geometry = new THREE.BoxGeometry(50, 50, 50);
+        const material = new THREE.MeshBasicMaterial({
+          color: 0x00ff88,
+          opacity: 0.2,
+          transparent: true,
+          wireframe: true
+        });
+        
+        highlightMesh = new THREE.Mesh(geometry, material);
+        highlightMesh.position.copy(point);
+        scene.add(highlightMesh);
+        
+        // Update quadrant info
+        updateQuadrantInfo(point.x, point.y, point.z);
+      }
+    });
+    
+    // Resize handler
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+    
+    // Update position info
+    function updatePositionInfo() {
+      const posInfo = document.getElementById('position-info');
+      posInfo.textContent = `X: ${camera.position.x.toFixed(2)}, Y: ${camera.position.y.toFixed(2)}, Z: ${camera.position.z.toFixed(2)}`;
+    }
+    
+    // Update quadrant info
+    function updateQuadrantInfo(x, y, z) {
+      // Simple quadrant calculation (just for demonstration)
+      const getQuadrant = (x, y, z) => {
+        const gridSize = 1000;
+        const sectorSize = gridSize / 8;
+        
+        // Normalize coordinates to 0-7 range
+        const xSector = Math.floor((x + gridSize/2) / sectorSize);
+        const ySector = Math.floor((y + gridSize/2) / sectorSize);
+        const zSector = Math.floor((z + gridSize/2) / sectorSize);
+        
+        // Clamp to valid range
+        const xIndex = Math.min(Math.max(xSector, 0), 7);
+        const yIndex = Math.min(Math.max(ySector, 0), 7);
+        const zIndex = Math.min(Math.max(zSector, 0), 7);
+        
+        return `A-${xIndex}-${zIndex}`;
+      };
+      
+      const quadrantCode = getQuadrant(x, y, z);
+      const quadrantInfo = document.getElementById('quadrant-info');
+      
+      quadrantInfo.innerHTML = `
+        <h3>Selected Quadrant</h3>
+        <div>Code: ${quadrantCode}</div>
+        <div>Coordinates: ${x.toFixed(2)}, ${y.toFixed(2)}, ${z.toFixed(2)}</div>
+      `;
+    }
+    
+    // Animation loop
+    function animate() {
+      requestAnimationFrame(animate);
+      
+      // Handle camera movement
+      const moveSpeed = 2;
+      const rotateSpeed = 0.02;
+      
+      if (keys['KeyW']) camera.position.z -= moveSpeed;
+      if (keys['KeyS']) camera.position.z += moveSpeed;
+      if (keys['KeyA']) camera.position.x -= moveSpeed;
+      if (keys['KeyD']) camera.position.x += moveSpeed;
+      if (keys['ArrowUp']) camera.position.y += moveSpeed;
+      if (keys['ArrowDown']) camera.position.y -= moveSpeed;
+      
+      if (keys['KeyQ']) {
+        camera.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), rotateSpeed);
+      }
+      
+      if (keys['KeyE']) {
+        camera.position.applyAxisAngle(new THREE.Vector3(0, 1, 0), -rotateSpeed);
+      }
+      
+      camera.lookAt(0, 0, 0);
+      
+      updatePositionInfo();
+      
+      renderer.render(scene, camera);
+    }
+    
+    animate();
+  </script>
+</body>
+</html>
